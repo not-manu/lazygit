@@ -358,6 +358,9 @@ type TranslationSet struct {
 	CommitDescriptionSubTitle             string
 	CommitDescriptionFooter               string
 	CommitHooksDisabledSubTitle           string
+	VimModeInsertSubTitle                 string
+	VimModeNormalSubTitle                 string
+	VimModeVisualSubTitle                 string
 	LocalBranchesTitle                    string
 	SearchTitle                           string
 	TagsTitle                             string
@@ -1544,6 +1547,9 @@ func EnglishTranslationSet() *TranslationSet {
 		CommitDescriptionSubTitle:            "Press {{.togglePanelKeyBinding}} to toggle focus, {{.commitMenuKeybinding}} to open menu",
 		CommitDescriptionFooter:              "Press {{.confirmInEditorKeybinding}} to submit",
 		CommitHooksDisabledSubTitle:          "(hooks disabled)",
+		VimModeInsertSubTitle:                "INSERT",
+		VimModeNormalSubTitle:                "NORMAL",
+		VimModeVisualSubTitle:                "VISUAL",
 		LocalBranchesTitle:                   "Local branches",
 		SearchTitle:                          "Search",
 		TagsTitle:                            "Tags",
