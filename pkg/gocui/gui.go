@@ -213,6 +213,10 @@ type Gui struct {
 	suspendedMutex sync.Mutex
 	suspended      bool
 
+	// last cursor style sent to the terminal, so redraws only re-send it on
+	// a mode change
+	lastCursorStyle tcell.CursorStyle
+
 	taskManager *TaskManager
 
 	// The task of the event currently being processed on the main goroutine, if
@@ -1684,6 +1688,25 @@ func outermostView(v *View) *View {
 	return v
 }
 
+// updateCursorStyle makes the terminal cursor reflect the vim mode of the
+// focused view: a bar in insert mode, a block otherwise. Views without a vim
+// editor keep the terminal's default. tcell restores the default style when
+// the screen disengages, so the style can't leak into the parent shell.
+func (g *Gui) updateCursorStyle(v *View) {
+	style := tcell.CursorStyleDefault
+	if v.vimEditor != nil {
+		if v.vimEditor.Mode() == VimModeInsert {
+			style = tcell.CursorStyleSteadyBar
+		} else {
+			style = tcell.CursorStyleSteadyBlock
+		}
+	}
+	if style != g.lastCursorStyle {
+		g.lastCursorStyle = style
+		Screen.SetCursorStyle(style)
+	}
+}
+
 // draw manages the cursor and calls the draw function of a view.
 func (g *Gui) draw(v *View) {
 	if !v.Visible || v.y1 < v.y0 || v.x1 < v.x0 {
@@ -1696,6 +1719,7 @@ func (g *Gui) draw(v *View) {
 			if curview.cx >= 0 && curview.cx < vMaxX && curview.cy >= 0 && curview.cy < vMaxY {
 				cx, cy := curview.x0+curview.cx+1, curview.y0+curview.cy+1
 				Screen.ShowCursor(cx, cy)
+				g.updateCursorStyle(curview)
 			} else {
 				Screen.HideCursor()
 			}
