@@ -83,7 +83,7 @@ func (gui *Gui) menuFilterEditor(v *gocui.View, key gocui.Key) bool {
 }
 
 func (gui *Gui) renderPromptVimMode(v *gocui.View) {
-	if mode := presentation.VimModeSubTitle(gui.c.Tr, v); mode != "" {
+	if mode := presentation.VimModeSubTitle(gui.c.Tr, v, true); mode != "" {
 		v.Subtitle = mode
 	}
 }
