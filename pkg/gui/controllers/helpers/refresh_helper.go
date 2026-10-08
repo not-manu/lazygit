@@ -1,6 +1,7 @@
 package helpers
 
 import (
+	"maps"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1778,20 +1779,19 @@ func (self *RefreshHelper) setGithubTagChecks(baseInfo *githubRemoteInfo, env re
 
 	repoPath := env.git.RepoPaths.RepoPath()
 	cached := self.c.GetConfig().GetCachedGithubTagChecks(repoPath)
-	uncached := lo.FilterMap(recentTags, func(tag git_commands.RecentTag, _ int) (string, bool) {
-		_, isCached := cached[tag.Name]
-		return tag.Name, !isCached
+	unsettled := lo.FilterMap(recentTags, func(tag git_commands.RecentTag, _ int) (string, bool) {
+		return tag.Name, !isSettledTagChecksState(cached[tag.Name])
 	})
 
 	states := cached
-	if len(uncached) > 0 {
-		fetched, err := env.git.GitHub.FetchTagChecksStates(uncached, &baseInfo.serviceInfo, baseInfo.authToken)
+	if len(unsettled) > 0 {
+		fetched, err := env.git.GitHub.FetchTagChecksStates(unsettled, &baseInfo.serviceInfo, baseInfo.authToken)
 		if err != nil {
 			self.c.Log.Error("error fetching tag checks from GitHub: " + err.Error())
 		} else {
 			var toCache map[string]string
 			states, toCache = settleTagChecks(recentTags, cached, fetched, time.Now())
-			if len(toCache) != len(cached) {
+			if !maps.Equal(toCache, cached) {
 				if err := self.c.GetConfig().SaveCachedGithubTagChecks(repoPath, toCache); err != nil {
 					self.c.Log.Warnf("error saving GitHub tag checks cache: %v", err)
 				}
@@ -1816,24 +1816,30 @@ func settleTagChecks(
 	fetched map[string]string,
 	now time.Time,
 ) (map[string]string, map[string]string) {
-	states := lo.Assign(cached)
 	toCache := lo.Assign(cached)
 	for _, tag := range recentTags {
-		if _, isCached := cached[tag.Name]; isCached {
+		if isSettledTagChecksState(cached[tag.Name]) {
 			continue
 		}
-		state := fetched[tag.Name]
-		switch {
-		case lo.Contains([]string{"SUCCESS", "FAILURE", "ERROR"}, state):
-			states[tag.Name] = state
+		if state := fetched[tag.Name]; state != "" {
 			toCache[tag.Name] = state
-		case state != "":
-			states[tag.Name] = state
-		case now.Sub(tag.CreatedAt) > tagChecksSettleAge:
+		} else if now.Sub(tag.CreatedAt) > tagChecksSettleAge {
 			toCache[tag.Name] = noTagChecks
 		}
 	}
+
+	states := lo.Assign(toCache)
+	repoHasTagChecks := lo.SomeBy(lo.Values(toCache), func(state string) bool { return state != noTagChecks })
+	for _, tag := range recentTags {
+		if _, known := states[tag.Name]; !known && repoHasTagChecks && now.Sub(tag.CreatedAt) <= tagChecksSettleAge {
+			states[tag.Name] = "PENDING"
+		}
+	}
 	return states, toCache
+}
+
+func isSettledTagChecksState(state string) bool {
+	return lo.Contains([]string{"SUCCESS", "FAILURE", "ERROR", noTagChecks}, state)
 }
 
 func (self *RefreshHelper) pollGithubTagChecks(baseInfo *githubRemoteInfo, env refreshEnv) {
