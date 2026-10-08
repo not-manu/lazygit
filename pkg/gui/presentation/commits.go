@@ -13,6 +13,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/graph"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/icons"
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
+	"github.com/jesseduffield/lazygit/pkg/i18n"
 	"github.com/jesseduffield/lazygit/pkg/theme"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/kyokomi/emoji/v2"
@@ -61,6 +62,7 @@ func GetCommitListDisplayStrings(
 	showGraph bool,
 	graphSymbolSet graph.SymbolSet,
 	bisectInfo *git_commands.BisectInfo,
+	tagChecksStates map[string]string,
 ) [][]string {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -216,6 +218,7 @@ func GetCommitListDisplayStrings(
 			fullDescription,
 			bisectStatus,
 			bisectInfo,
+			tagChecksStates,
 			reservedWidths,
 		))
 	}
@@ -429,6 +432,14 @@ func getActionText(commit *models.Commit) string {
 	return text
 }
 
+func tagColor(checksState string, tr *i18n.TranslationSet) style.TextStyle {
+	_, text, textStyle := checksStatePresentation(checksState, tr)
+	if text == "" || checksState == "EXPECTED" {
+		return theme.DiffTerminalColor
+	}
+	return textStyle
+}
+
 func displayCommit(
 	common *common.Common,
 	commit *models.Commit,
@@ -446,6 +457,7 @@ func displayCommit(
 	fullDescription bool,
 	bisectStatus BisectStatus,
 	bisectInfo *git_commands.BisectInfo,
+	tagChecksStates map[string]string,
 	reservedWidths reservedColumnWidths,
 ) []string {
 	bisectString := ""
@@ -485,7 +497,9 @@ func displayCommit(
 		}
 	} else {
 		if len(commit.Tags) > 0 {
-			tagString = theme.DiffTerminalColor.SetBold().Sprint(strings.Join(commit.Tags, " ")) + " "
+			tagString = strings.Join(lo.Map(commit.Tags, func(tag string, _ int) string {
+				return tagColor(tagChecksStates[tag], common.Tr).SetBold().Sprint(tag)
+			}), " ") + " "
 		}
 
 		if branchHeadsToVisualize.Includes(commit.Hash()) &&

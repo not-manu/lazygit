@@ -194,6 +194,7 @@ func NewLocalCommitsContext(c *ContextCommon) *LocalCommitsContext {
 			shouldShowGraph(c),
 			commitGraphSymbolSet(c),
 			c.Model().BisectInfo,
+			c.Model().TagChecksStates,
 		)
 	}
 
