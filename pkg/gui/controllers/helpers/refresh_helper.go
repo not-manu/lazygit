@@ -1746,7 +1746,6 @@ func (self *RefreshHelper) refreshGithubPullRequests(branches []*models.Branch, 
 		self.onUIThreadUnlessRepoChanged(env, func() {
 			self.c.Model().PullRequests = nil
 			self.c.Model().PullRequestsMap = nil
-			self.c.Model().TagChecksStates = nil
 		})
 	}
 
