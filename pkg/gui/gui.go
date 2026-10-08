@@ -649,6 +649,7 @@ func (gui *Gui) resetState(startArgs appTypes.StartArgs) types.Context {
 			HashPool:              &utils.StringPool{},
 			PullRequests:          gui.loadCachedPullRequests(),
 			PullRequestsMap:       make(map[string]*models.GithubPullRequest),
+			TagChecksStates:       gui.Config.GetCachedGithubTagChecks(gui.git.RepoPaths.RepoPath()),
 		},
 		Modes: &types.Modes{
 			Filtering:        filtering.New(startArgs.FilterPath, ""),
