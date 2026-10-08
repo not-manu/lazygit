@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/jesseduffield/lazygit/pkg/commands/git_commands"
+	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -22,35 +23,38 @@ func TestSettleTagChecks(t *testing.T) {
 		{Name: "old-without-checks", CreatedAt: old},
 		{Name: "cached", CreatedAt: old},
 	}
-	cached := map[string]string{"cached": "SUCCESS", "was-pending": "PENDING"}
-	fetched := map[string]string{
-		"pending":     "PENDING",
-		"was-pending": "SUCCESS",
-		"failed":      "FAILURE",
-		"passed":      "SUCCESS",
-		"cached":      "FAILURE",
+	pending := models.TagChecks{State: "PENDING", StartedAt: fresh}
+	passed := models.TagChecks{State: "SUCCESS", StartedAt: old, CompletedAt: old.Add(time.Minute)}
+	failed := models.TagChecks{State: "FAILURE", StartedAt: fresh, CompletedAt: now}
+	cached := map[string]models.TagChecks{"cached": passed, "was-pending": pending}
+	fetched := map[string]models.TagChecks{
+		"pending":     pending,
+		"was-pending": passed,
+		"failed":      failed,
+		"passed":      passed,
+		"cached":      failed,
 	}
 
-	states, toCache := settleTagChecks(recentTags, cached, fetched, now)
+	checks, toCache := settleTagChecks(recentTags, cached, fetched, now)
 
-	assert.Equal(t, map[string]string{
-		"pending":              "PENDING",
-		"was-pending":          "SUCCESS",
-		"failed":               "FAILURE",
-		"passed":               "SUCCESS",
-		"fresh-without-checks": "PENDING",
-		"old-without-checks":   noTagChecks,
-		"cached":               "SUCCESS",
-	}, states)
-	assert.Equal(t, map[string]string{
-		"pending":            "PENDING",
-		"was-pending":        "SUCCESS",
-		"failed":             "FAILURE",
-		"passed":             "SUCCESS",
-		"old-without-checks": noTagChecks,
-		"cached":             "SUCCESS",
+	assert.Equal(t, map[string]models.TagChecks{
+		"pending":              pending,
+		"was-pending":          passed,
+		"failed":               failed,
+		"passed":               passed,
+		"fresh-without-checks": {State: "PENDING"},
+		"old-without-checks":   {State: noTagChecks},
+		"cached":               passed,
+	}, checks)
+	assert.Equal(t, map[string]models.TagChecks{
+		"pending":            pending,
+		"was-pending":        passed,
+		"failed":             failed,
+		"passed":             passed,
+		"old-without-checks": {State: noTagChecks},
+		"cached":             passed,
 	}, toCache)
-	assert.Equal(t, map[string]string{"cached": "SUCCESS", "was-pending": "PENDING"}, cached)
+	assert.Equal(t, map[string]models.TagChecks{"cached": passed, "was-pending": pending}, cached)
 }
 
 func TestSettleTagChecksIsNotOptimisticWithoutTagChecks(t *testing.T) {
@@ -60,7 +64,15 @@ func TestSettleTagChecksIsNotOptimisticWithoutTagChecks(t *testing.T) {
 		{Name: "old", CreatedAt: now.Add(-time.Hour)},
 	}
 
-	states, _ := settleTagChecks(recentTags, map[string]string{}, map[string]string{}, now)
+	checks, _ := settleTagChecks(recentTags, map[string]models.TagChecks{}, map[string]models.TagChecks{}, now)
 
-	assert.Equal(t, map[string]string{"old": noTagChecks}, states)
+	assert.Equal(t, map[string]models.TagChecks{"old": {State: noTagChecks}}, checks)
+}
+
+func TestHasRunningTagChecks(t *testing.T) {
+	started := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+
+	assert.True(t, hasRunningTagChecks(map[string]models.TagChecks{"a": {State: "PENDING", StartedAt: started}}))
+	assert.False(t, hasRunningTagChecks(map[string]models.TagChecks{"a": {State: "PENDING"}}))
+	assert.False(t, hasRunningTagChecks(map[string]models.TagChecks{"a": {State: "SUCCESS", StartedAt: started, CompletedAt: started}}))
 }

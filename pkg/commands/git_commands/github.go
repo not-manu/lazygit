@@ -283,22 +283,10 @@ func fetchTagChecksQuery(tags []string, owner string, repo string) (string, map[
 		queries = append(queries, fmt.Sprintf(`a%d: ref(qualifiedName: $%s) {
       name
       target {
-        ... on Commit {
-          statusCheckRollup {
-            state
-          }
-        }
-        ... on Tag {
-          target {
-            ... on Commit {
-              statusCheckRollup {
-                state
-              }
-            }
-          }
-        }
+        ... on Commit { %s }
+        ... on Tag { target { ... on Commit { %s } } }
       }
-    }`, i+1, varName))
+    }`, i+1, varName, tagChecksRollupFields, tagChecksRollupFields))
 	}
 
 	return fmt.Sprintf(`query(%s) {
@@ -307,6 +295,18 @@ func fetchTagChecksQuery(tags []string, owner string, repo string) (string, map[
   }
 }`, strings.Join(varDecls, ", "), strings.Join(queries, "\n")), variables
 }
+
+const tagChecksRollupFields = `statusCheckRollup {
+  state
+  contexts(first: 20) {
+    nodes {
+      ... on CheckRun {
+        startedAt
+        completedAt
+      }
+    }
+  }
+}`
 
 type tagChecksResponse struct {
 	Data struct {
@@ -317,12 +317,46 @@ type tagChecksResponse struct {
 type githubTagRef struct {
 	Name   string `json:"name"`
 	Target struct {
-		StatusCheckRollup GithubStatusCheckRollup `json:"statusCheckRollup"`
-		Target            GithubGitObject         `json:"target"`
+		StatusCheckRollup *tagChecksRollup `json:"statusCheckRollup"`
+		Target            struct {
+			StatusCheckRollup *tagChecksRollup `json:"statusCheckRollup"`
+		} `json:"target"`
 	} `json:"target"`
 }
 
-func (self *GitHubCommands) FetchTagChecksStates(tags []string, serviceInfo *hosting_service.ServiceInfo, token string) (map[string]string, error) {
+type tagChecksRollup struct {
+	State    string `json:"state"`
+	Contexts struct {
+		Nodes []struct {
+			StartedAt   *time.Time `json:"startedAt"`
+			CompletedAt *time.Time `json:"completedAt"`
+		} `json:"nodes"`
+	} `json:"contexts"`
+}
+
+func (r *tagChecksRollup) toTagChecks() models.TagChecks {
+	checks := models.TagChecks{State: r.State}
+	finished := true
+	for _, run := range r.Contexts.Nodes {
+		if run.StartedAt == nil {
+			continue
+		}
+		if checks.StartedAt.IsZero() || run.StartedAt.Before(checks.StartedAt) {
+			checks.StartedAt = *run.StartedAt
+		}
+		if run.CompletedAt == nil {
+			finished = false
+		} else if run.CompletedAt.After(checks.CompletedAt) {
+			checks.CompletedAt = *run.CompletedAt
+		}
+	}
+	if !finished {
+		checks.CompletedAt = time.Time{}
+	}
+	return checks
+}
+
+func (self *GitHubCommands) FetchTagChecks(tags []string, serviceInfo *hosting_service.ServiceInfo, token string) (map[string]models.TagChecks, error) {
 	query, variables := fetchTagChecksQuery(tags, serviceInfo.Owner, serviceInfo.Repository)
 	respBytes, err := postGraphQL(graphQLEndpoint(serviceInfo.WebDomain), token, query, variables)
 	if err != nil {
@@ -332,24 +366,24 @@ func (self *GitHubCommands) FetchTagChecksStates(tags []string, serviceInfo *hos
 	return parseTagChecksResponse(respBytes)
 }
 
-func parseTagChecksResponse(respBytes []byte) (map[string]string, error) {
+func parseTagChecksResponse(respBytes []byte) (map[string]models.TagChecks, error) {
 	var result tagChecksResponse
 	if err := json.Unmarshal(respBytes, &result); err != nil {
 		return nil, err
 	}
 
-	states := map[string]string{}
+	checks := map[string]models.TagChecks{}
 	for _, ref := range result.Data.Repository {
 		if ref == nil {
 			continue
 		}
-		state := lo.CoalesceOrEmpty(ref.Target.StatusCheckRollup.State, ref.Target.Target.StatusCheckRollup.State)
-		if state != "" {
-			states[ref.Name] = state
+		rollup := lo.CoalesceOrEmpty(ref.Target.StatusCheckRollup, ref.Target.Target.StatusCheckRollup)
+		if rollup != nil && rollup.State != "" {
+			checks[ref.Name] = rollup.toTagChecks()
 		}
 	}
 
-	return states, nil
+	return checks, nil
 }
 
 func postGraphQL(endpoint string, token string, query string, variables map[string]string) ([]byte, error) {
