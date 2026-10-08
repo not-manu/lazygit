@@ -58,7 +58,12 @@ type RefreshHelper struct {
 	tagChecksPollScheduled atomic.Bool
 }
 
-const tagChecksPollInterval = 15 * time.Second
+const (
+	tagChecksPollInterval = 15 * time.Second
+	tagChecksSettleAge    = 10 * time.Minute
+	recentTagsToCheck     = 30
+	noTagChecks           = "NONE"
+)
 
 func NewRefreshHelper(
 	c *HelperCommon,
@@ -1766,10 +1771,33 @@ func (self *RefreshHelper) refreshGithubPullRequests(branches []*models.Branch, 
 }
 
 func (self *RefreshHelper) setGithubTagChecks(baseInfo *githubRemoteInfo, env refreshEnv) {
-	states, err := env.git.GitHub.FetchTagChecksStates(&baseInfo.serviceInfo, baseInfo.authToken)
+	recentTags, err := env.git.Loaders.TagLoader.GetRecentTags(recentTagsToCheck)
 	if err != nil {
-		self.c.Log.Error("error fetching tag checks from GitHub: " + err.Error())
+		self.c.Log.Error(err)
 		return
+	}
+
+	repoPath := env.git.RepoPaths.RepoPath()
+	cached := self.c.GetConfig().GetCachedGithubTagChecks(repoPath)
+	uncached := lo.FilterMap(recentTags, func(tag git_commands.RecentTag, _ int) (string, bool) {
+		_, isCached := cached[tag.Name]
+		return tag.Name, !isCached
+	})
+
+	states := cached
+	if len(uncached) > 0 {
+		fetched, err := env.git.GitHub.FetchTagChecksStates(uncached, &baseInfo.serviceInfo, baseInfo.authToken)
+		if err != nil {
+			self.c.Log.Error("error fetching tag checks from GitHub: " + err.Error())
+		} else {
+			var toCache map[string]string
+			states, toCache = settleTagChecks(recentTags, cached, fetched, time.Now())
+			if len(toCache) != len(cached) {
+				if err := self.c.GetConfig().SaveCachedGithubTagChecks(repoPath, toCache); err != nil {
+					self.c.Log.Warnf("error saving GitHub tag checks cache: %v", err)
+				}
+			}
+		}
 	}
 
 	self.onUIThreadUnlessRepoChanged(env, func() {
@@ -1781,6 +1809,32 @@ func (self *RefreshHelper) setGithubTagChecks(baseInfo *githubRemoteInfo, env re
 	if lo.Some(lo.Values(states), []string{"PENDING", "EXPECTED"}) {
 		self.pollGithubTagChecks(baseInfo, env)
 	}
+}
+
+func settleTagChecks(
+	recentTags []git_commands.RecentTag,
+	cached map[string]string,
+	fetched map[string]string,
+	now time.Time,
+) (map[string]string, map[string]string) {
+	states := lo.Assign(cached)
+	toCache := lo.Assign(cached)
+	for _, tag := range recentTags {
+		if _, isCached := cached[tag.Name]; isCached {
+			continue
+		}
+		state := fetched[tag.Name]
+		switch {
+		case lo.Contains([]string{"SUCCESS", "FAILURE", "ERROR"}, state):
+			states[tag.Name] = state
+			toCache[tag.Name] = state
+		case state != "":
+			states[tag.Name] = state
+		case now.Sub(tag.CreatedAt) > tagChecksSettleAge:
+			toCache[tag.Name] = noTagChecks
+		}
+	}
+	return states, toCache
 }
 
 func (self *RefreshHelper) pollGithubTagChecks(baseInfo *githubRemoteInfo, env refreshEnv) {

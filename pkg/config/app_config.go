@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,6 +35,7 @@ type AppConfig struct {
 	tempDir                string
 	appState               *AppState
 	githubPullRequestCache *githubPullRequestCache
+	githubTagChecksCache   *githubTagChecksCache
 }
 
 type AppConfigurer interface {
@@ -55,6 +57,8 @@ type AppConfigurer interface {
 	SaveAppState() error
 	GetCachedGithubPullRequests(repoPath string) ([]CachedPullRequest, error)
 	SaveCachedGithubPullRequests(repoPath string, pullRequests []CachedPullRequest) error
+	GetCachedGithubTagChecks(repoPath string) map[string]string
+	SaveCachedGithubTagChecks(repoPath string, states map[string]string) error
 }
 
 type ConfigFilePolicy int
@@ -126,6 +130,7 @@ func NewAppConfig(
 		tempDir:                tempDir,
 		appState:               appState,
 		githubPullRequestCache: githubPullRequestCache,
+		githubTagChecksCache:   loadGithubTagChecksCache(),
 	}
 
 	return appConfig, nil
@@ -730,14 +735,28 @@ func (c *AppConfig) GetCachedGithubPullRequests(repoPath string) ([]CachedPullRe
 	if c.githubPullRequestCache == nil {
 		return nil, nil
 	}
-	return c.githubPullRequestCache.get(repoPath), c.githubPullRequestCache.takeLoadError()
+	return slices.Clone(c.githubPullRequestCache.get(repoPath)), c.githubPullRequestCache.takeLoadError()
 }
 
 func (c *AppConfig) SaveCachedGithubPullRequests(repoPath string, pullRequests []CachedPullRequest) error {
 	if c.githubPullRequestCache == nil {
 		return nil
 	}
-	return c.githubPullRequestCache.save(repoPath, pullRequests)
+	return c.githubPullRequestCache.save(repoPath, slices.Clone(pullRequests))
+}
+
+func (c *AppConfig) GetCachedGithubTagChecks(repoPath string) map[string]string {
+	if c.githubTagChecksCache == nil {
+		return map[string]string{}
+	}
+	return lo.Assign(c.githubTagChecksCache.get(repoPath))
+}
+
+func (c *AppConfig) SaveCachedGithubTagChecks(repoPath string, states map[string]string) error {
+	if c.githubTagChecksCache == nil {
+		return nil
+	}
+	return c.githubTagChecksCache.save(repoPath, lo.Assign(states))
 }
 
 func (c *AppConfig) GetUserConfigPaths() []string {

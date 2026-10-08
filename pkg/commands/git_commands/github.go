@@ -272,39 +272,45 @@ func (self *GitHubCommands) fetchRecentPRsAux(endpoint string, repoOwner string,
 	return parsePullRequestsResponse(respBytes)
 }
 
-const tagChecksQuery = `query($owner: String!, $repo: String!) {
-  repository(owner: $owner, name: $repo) {
-    refs(refPrefix: "refs/tags/", first: 30, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) {
-      nodes {
-        name
-        target {
-          ... on Commit {
-            statusCheckRollup {
-              state
-            }
+func fetchTagChecksQuery(tags []string, owner string, repo string) (string, map[string]string) {
+	variables := map[string]string{"owner": owner, "repo": repo}
+	varDecls := []string{"$owner: String!", "$repo: String!"}
+	queries := make([]string, 0, len(tags))
+	for i, tag := range tags {
+		varName := fmt.Sprintf("tag%d", i+1)
+		variables[varName] = "refs/tags/" + tag
+		varDecls = append(varDecls, fmt.Sprintf("$%s: String!", varName))
+		queries = append(queries, fmt.Sprintf(`a%d: ref(qualifiedName: $%s) {
+      name
+      target {
+        ... on Commit {
+          statusCheckRollup {
+            state
           }
-          ... on Tag {
-            target {
-              ... on Commit {
-                statusCheckRollup {
-                  state
-                }
+        }
+        ... on Tag {
+          target {
+            ... on Commit {
+              statusCheckRollup {
+                state
               }
             }
           }
         }
       }
-    }
+    }`, i+1, varName))
+	}
+
+	return fmt.Sprintf(`query(%s) {
+  repository(owner: $owner, name: $repo) {
+    %s
   }
-}`
+}`, strings.Join(varDecls, ", "), strings.Join(queries, "\n")), variables
+}
 
 type tagChecksResponse struct {
 	Data struct {
-		Repository struct {
-			Refs struct {
-				Nodes []githubTagRef `json:"nodes"`
-			} `json:"refs"`
-		} `json:"repository"`
+		Repository map[string]*githubTagRef `json:"repository"`
 	} `json:"data"`
 }
 
@@ -316,9 +322,9 @@ type githubTagRef struct {
 	} `json:"target"`
 }
 
-func (self *GitHubCommands) FetchTagChecksStates(serviceInfo *hosting_service.ServiceInfo, token string) (map[string]string, error) {
-	variables := map[string]string{"owner": serviceInfo.Owner, "repo": serviceInfo.Repository}
-	respBytes, err := postGraphQL(graphQLEndpoint(serviceInfo.WebDomain), token, tagChecksQuery, variables)
+func (self *GitHubCommands) FetchTagChecksStates(tags []string, serviceInfo *hosting_service.ServiceInfo, token string) (map[string]string, error) {
+	query, variables := fetchTagChecksQuery(tags, serviceInfo.Owner, serviceInfo.Repository)
+	respBytes, err := postGraphQL(graphQLEndpoint(serviceInfo.WebDomain), token, query, variables)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +339,10 @@ func parseTagChecksResponse(respBytes []byte) (map[string]string, error) {
 	}
 
 	states := map[string]string{}
-	for _, ref := range result.Data.Repository.Refs.Nodes {
+	for _, ref := range result.Data.Repository {
+		if ref == nil {
+			continue
+		}
 		state := lo.CoalesceOrEmpty(ref.Target.StatusCheckRollup.State, ref.Target.Target.StatusCheckRollup.State)
 		if state != "" {
 			states[ref.Name] = state
