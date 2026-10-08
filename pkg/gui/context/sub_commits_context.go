@@ -100,7 +100,7 @@ func NewSubCommitsContext(
 			shouldShowGraph(c),
 			commitGraphSymbolSet(c),
 			git_commands.NewNullBisectInfo(),
-			c.Model().TagChecksStates,
+			c.Model().TagChecks,
 		)
 	}
 

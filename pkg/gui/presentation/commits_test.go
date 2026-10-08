@@ -13,6 +13,7 @@ import (
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/authors"
 	"github.com/jesseduffield/lazygit/pkg/gui/presentation/graph"
 	"github.com/jesseduffield/lazygit/pkg/gui/style"
+	"github.com/jesseduffield/lazygit/pkg/theme"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/samber/lo"
 	"github.com/stefanhaller/git-todo-parser/todo"
@@ -635,18 +636,29 @@ func TestTagsAreColoredByChecksState(t *testing.T) {
 		models.NewCommit(hashPool, models.NewCommitOpts{Name: "c", Hash: "hash1", Tags: []string{"pending", "failed", "passed", "unknown"}}),
 	}
 
+	now := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 	result := GetCommitListDisplayStrings(
 		common.NewDummyCommon(), commits, nil, "", false, false, set.New[string](), "", "", "", "",
-		time.Now(), false, nil, 0, 1, false, graph.BoxDrawingSymbols, git_commands.NewNullBisectInfo(),
-		map[string]string{"pending": "PENDING", "failed": "FAILURE", "passed": "SUCCESS"},
+		now, false, nil, 0, 1, false, graph.BoxDrawingSymbols, git_commands.NewNullBisectInfo(),
+		map[string]models.TagChecks{
+			"pending": {State: "PENDING", StartedAt: now.Add(-61 * time.Second)},
+			"failed":  {State: "FAILURE", StartedAt: now.Add(-time.Hour), CompletedAt: now.Add(-time.Hour + 9*time.Second)},
+			"passed":  {State: "SUCCESS"},
+		},
 	)
 
 	line := strings.Join(result[0], " ")
-	assert.Contains(t, line, style.FgYellow.SetBold().Sprint("pending"))
-	assert.Contains(t, line, style.FgRed.SetBold().Sprint("failed"))
-	assert.Contains(t, line, style.FgGreen.SetBold().Sprint("passed"))
-	assert.NotContains(t, line, style.FgGreen.SetBold().Sprint("unknown"))
-	assert.NotContains(t, line, style.FgYellow.SetBold().Sprint("unknown"))
+	assert.Contains(t, line, style.FgYellow.SetBold().Sprint("pending")+" "+style.FgYellow.Sprint("1m 1s"))
+	assert.Contains(t, line, style.FgRed.SetBold().Sprint("failed")+" "+style.FgRed.Sprint("9s"))
+	assert.Contains(t, line, style.FgGreen.SetBold().Sprint("passed")+" "+theme.DiffTerminalColor.SetBold().Sprint("unknown"))
+}
+
+func TestFormatElapsed(t *testing.T) {
+	assert.Equal(t, "0s", formatElapsed(-time.Second))
+	assert.Equal(t, "2s", formatElapsed(2*time.Second))
+	assert.Equal(t, "1m 1s", formatElapsed(61*time.Second))
+	assert.Equal(t, "59m 59s", formatElapsed(time.Hour-time.Second))
+	assert.Equal(t, "1h 2m", formatElapsed(time.Hour+2*time.Minute+5*time.Second))
 }
 
 func TestGraphColorsFollowTheAuthorColors(t *testing.T) {

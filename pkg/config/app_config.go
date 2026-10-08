@@ -15,6 +15,7 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/jesseduffield/generics/orderedset"
+	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/utils"
 	"github.com/jesseduffield/lazygit/pkg/utils/yaml_utils"
 	"github.com/samber/lo"
@@ -57,8 +58,8 @@ type AppConfigurer interface {
 	SaveAppState() error
 	GetCachedGithubPullRequests(repoPath string) ([]CachedPullRequest, error)
 	SaveCachedGithubPullRequests(repoPath string, pullRequests []CachedPullRequest) error
-	GetCachedGithubTagChecks(repoPath string) map[string]string
-	SaveCachedGithubTagChecks(repoPath string, states map[string]string) error
+	GetCachedGithubTagChecks(repoPath string) map[string]models.TagChecks
+	SaveCachedGithubTagChecks(repoPath string, checks map[string]models.TagChecks) error
 }
 
 type ConfigFilePolicy int
@@ -745,18 +746,18 @@ func (c *AppConfig) SaveCachedGithubPullRequests(repoPath string, pullRequests [
 	return c.githubPullRequestCache.save(repoPath, slices.Clone(pullRequests))
 }
 
-func (c *AppConfig) GetCachedGithubTagChecks(repoPath string) map[string]string {
+func (c *AppConfig) GetCachedGithubTagChecks(repoPath string) map[string]models.TagChecks {
 	if c.githubTagChecksCache == nil {
-		return map[string]string{}
+		return map[string]models.TagChecks{}
 	}
 	return lo.Assign(c.githubTagChecksCache.get(repoPath))
 }
 
-func (c *AppConfig) SaveCachedGithubTagChecks(repoPath string, states map[string]string) error {
+func (c *AppConfig) SaveCachedGithubTagChecks(repoPath string, checks map[string]models.TagChecks) error {
 	if c.githubTagChecksCache == nil {
 		return nil
 	}
-	return c.githubTagChecksCache.save(repoPath, lo.Assign(states))
+	return c.githubTagChecksCache.save(repoPath, lo.Assign(checks))
 }
 
 func (c *AppConfig) GetUserConfigPaths() []string {

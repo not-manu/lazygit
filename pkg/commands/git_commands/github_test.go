@@ -2,6 +2,7 @@ package git_commands
 
 import (
 	"testing"
+	"time"
 
 	"github.com/jesseduffield/lazygit/pkg/commands/hosting_service"
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
@@ -176,22 +177,34 @@ func TestParsePullRequestsResponse(t *testing.T) {
 
 func TestParseTagChecksResponse(t *testing.T) {
 	response := []byte(`{"data":{"repository":{
-		"a1":{"name":"v1.0.2","target":{"target":{"statusCheckRollup":{"state":"PENDING"}}}},
-		"a2":{"name":"v1.0.1","target":{"statusCheckRollup":{"state":"FAILURE"}}},
-		"a3":{"name":"v1.0.0","target":{"target":{"statusCheckRollup":{"state":"SUCCESS"}}}},
+		"a1":{"name":"v1.0.2","target":{"target":{"statusCheckRollup":{"state":"PENDING","contexts":{"nodes":[
+			{"startedAt":"2026-01-01T12:00:00Z","completedAt":"2026-01-01T12:00:20Z"},
+			{"startedAt":"2026-01-01T12:00:05Z","completedAt":null}
+		]}}}}},
+		"a2":{"name":"v1.0.1","target":{"statusCheckRollup":{"state":"FAILURE","contexts":{"nodes":[
+			{"startedAt":"2026-01-01T11:00:10Z","completedAt":"2026-01-01T11:01:00Z"},
+			{"startedAt":"2026-01-01T11:00:00Z","completedAt":"2026-01-01T11:00:30Z"},
+			{}
+		]}}}},
+		"a3":{"name":"v1.0.0","target":{"target":{"statusCheckRollup":{"state":"SUCCESS","contexts":{"nodes":[]}}}}},
 		"a4":{"name":"v0.9.0","target":{"target":{"statusCheckRollup":null}}},
 		"a5":{"name":"v0.8.0","target":{"statusCheckRollup":null}},
 		"a6":null
 	}}}`)
 
-	states, err := parseTagChecksResponse(response)
+	checks, err := parseTagChecksResponse(response)
 
+	at := func(value string) time.Time {
+		parsed, err := time.Parse(time.RFC3339, value)
+		assert.NoError(t, err)
+		return parsed
+	}
 	assert.NoError(t, err)
-	assert.Equal(t, map[string]string{
-		"v1.0.2": "PENDING",
-		"v1.0.1": "FAILURE",
-		"v1.0.0": "SUCCESS",
-	}, states)
+	assert.Equal(t, map[string]models.TagChecks{
+		"v1.0.2": {State: "PENDING", StartedAt: at("2026-01-01T12:00:00Z")},
+		"v1.0.1": {State: "FAILURE", StartedAt: at("2026-01-01T11:00:00Z"), CompletedAt: at("2026-01-01T11:01:00Z")},
+		"v1.0.0": {State: "SUCCESS"},
+	}, checks)
 
 	_, err = parseTagChecksResponse([]byte(`{"data":`))
 	assert.Error(t, err)

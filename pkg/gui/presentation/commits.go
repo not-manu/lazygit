@@ -62,7 +62,7 @@ func GetCommitListDisplayStrings(
 	showGraph bool,
 	graphSymbolSet graph.SymbolSet,
 	bisectInfo *git_commands.BisectInfo,
-	tagChecksStates map[string]string,
+	tagChecks map[string]models.TagChecks,
 ) [][]string {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -218,7 +218,7 @@ func GetCommitListDisplayStrings(
 			fullDescription,
 			bisectStatus,
 			bisectInfo,
-			tagChecksStates,
+			tagChecks,
 			reservedWidths,
 		))
 	}
@@ -440,6 +440,27 @@ func tagColor(checksState string, tr *i18n.TranslationSet) style.TextStyle {
 	return textStyle
 }
 
+func displayTag(tag string, checks models.TagChecks, now time.Time, tr *i18n.TranslationSet) string {
+	color := tagColor(checks.State, tr)
+	text := color.SetBold().Sprint(tag)
+	if elapsed, ok := checks.Elapsed(now); ok {
+		text += " " + color.Sprint(formatElapsed(elapsed))
+	}
+	return text
+}
+
+func formatElapsed(elapsed time.Duration) string {
+	seconds := int(max(elapsed, 0).Seconds())
+	switch {
+	case seconds < 60:
+		return fmt.Sprintf("%ds", seconds)
+	case seconds < 3600:
+		return fmt.Sprintf("%dm %ds", seconds/60, seconds%60)
+	default:
+		return fmt.Sprintf("%dh %dm", seconds/3600, seconds%3600/60)
+	}
+}
+
 func displayCommit(
 	common *common.Common,
 	commit *models.Commit,
@@ -457,7 +478,7 @@ func displayCommit(
 	fullDescription bool,
 	bisectStatus BisectStatus,
 	bisectInfo *git_commands.BisectInfo,
-	tagChecksStates map[string]string,
+	tagChecks map[string]models.TagChecks,
 	reservedWidths reservedColumnWidths,
 ) []string {
 	bisectString := ""
@@ -498,7 +519,7 @@ func displayCommit(
 	} else {
 		if len(commit.Tags) > 0 {
 			tagString = strings.Join(lo.Map(commit.Tags, func(tag string, _ int) string {
-				return tagColor(tagChecksStates[tag], common.Tr).SetBold().Sprint(tag)
+				return displayTag(tag, tagChecks[tag], now, common.Tr)
 			}), " ") + " "
 		}
 
