@@ -1,7 +1,11 @@
 package git_commands
 
 import (
+	"fmt"
 	"regexp"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jesseduffield/lazygit/pkg/commands/models"
 	"github.com/jesseduffield/lazygit/pkg/commands/oscommands"
@@ -53,4 +57,28 @@ func (self *TagLoader) GetTags() ([]*models.Tag, error) {
 	})
 
 	return tags, nil
+}
+
+type RecentTag struct {
+	Name      string
+	CreatedAt time.Time
+}
+
+func (self *TagLoader) GetRecentTags(count int) ([]RecentTag, error) {
+	cmdArgs := NewGitCmd("for-each-ref").
+		Arg("--sort=-creatordate", fmt.Sprintf("--count=%d", count), "--format=%(creatordate:unix) %(refname:strip=2)", "refs/tags").
+		ToArgv()
+	output, err := self.cmd.New(cmdArgs).DontLog().RunWithOutput()
+	if err != nil {
+		return nil, err
+	}
+
+	return lo.FilterMap(utils.SplitLines(output), func(line string, _ int) (RecentTag, bool) {
+		timestamp, name, found := strings.Cut(line, " ")
+		unix, err := strconv.ParseInt(timestamp, 10, 64)
+		if !found || err != nil {
+			return RecentTag{}, false
+		}
+		return RecentTag{Name: name, CreatedAt: time.Unix(unix, 0)}, true
+	}), nil
 }

@@ -175,13 +175,14 @@ func TestParsePullRequestsResponse(t *testing.T) {
 }
 
 func TestParseTagChecksResponse(t *testing.T) {
-	response := []byte(`{"data":{"repository":{"refs":{"nodes":[
-		{"name":"v1.0.2","target":{"target":{"statusCheckRollup":{"state":"PENDING"}}}},
-		{"name":"v1.0.1","target":{"statusCheckRollup":{"state":"FAILURE"}}},
-		{"name":"v1.0.0","target":{"target":{"statusCheckRollup":{"state":"SUCCESS"}}}},
-		{"name":"v0.9.0","target":{"target":{"statusCheckRollup":null}}},
-		{"name":"v0.8.0","target":{"statusCheckRollup":null}}
-	]}}}}`)
+	response := []byte(`{"data":{"repository":{
+		"a1":{"name":"v1.0.2","target":{"target":{"statusCheckRollup":{"state":"PENDING"}}}},
+		"a2":{"name":"v1.0.1","target":{"statusCheckRollup":{"state":"FAILURE"}}},
+		"a3":{"name":"v1.0.0","target":{"target":{"statusCheckRollup":{"state":"SUCCESS"}}}},
+		"a4":{"name":"v0.9.0","target":{"target":{"statusCheckRollup":null}}},
+		"a5":{"name":"v0.8.0","target":{"statusCheckRollup":null}},
+		"a6":null
+	}}}`)
 
 	states, err := parseTagChecksResponse(response)
 
