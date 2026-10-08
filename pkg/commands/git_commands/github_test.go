@@ -174,6 +174,28 @@ func TestParsePullRequestsResponse(t *testing.T) {
 	})
 }
 
+func TestParseTagChecksResponse(t *testing.T) {
+	response := []byte(`{"data":{"repository":{"refs":{"nodes":[
+		{"name":"v1.0.2","target":{"target":{"statusCheckRollup":{"state":"PENDING"}}}},
+		{"name":"v1.0.1","target":{"statusCheckRollup":{"state":"FAILURE"}}},
+		{"name":"v1.0.0","target":{"target":{"statusCheckRollup":{"state":"SUCCESS"}}}},
+		{"name":"v0.9.0","target":{"target":{"statusCheckRollup":null}}},
+		{"name":"v0.8.0","target":{"statusCheckRollup":null}}
+	]}}}}`)
+
+	states, err := parseTagChecksResponse(response)
+
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]string{
+		"v1.0.2": "PENDING",
+		"v1.0.1": "FAILURE",
+		"v1.0.0": "SUCCESS",
+	}, states)
+
+	_, err = parseTagChecksResponse([]byte(`{"data":`))
+	assert.Error(t, err)
+}
+
 func TestGenerateGithubPullRequestMap(t *testing.T) {
 	cases := []struct {
 		name     string

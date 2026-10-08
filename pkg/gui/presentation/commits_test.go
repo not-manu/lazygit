@@ -613,6 +613,7 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 					s.showGraph,
 					graph.BoxDrawingSymbols,
 					s.bisectInfo,
+					nil,
 				)
 
 				renderedLines, _ := utils.RenderDisplayStrings(result, nil)
@@ -623,6 +624,29 @@ func TestGetCommitListDisplayStrings(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestTagsAreColoredByChecksState(t *testing.T) {
+	oldColorLevel := color.ForceSetColorLevel(terminfo.ColorLevelMillions)
+	defer color.ForceSetColorLevel(oldColorLevel)
+
+	hashPool := &utils.StringPool{}
+	commits := []*models.Commit{
+		models.NewCommit(hashPool, models.NewCommitOpts{Name: "c", Hash: "hash1", Tags: []string{"pending", "failed", "passed", "unknown"}}),
+	}
+
+	result := GetCommitListDisplayStrings(
+		common.NewDummyCommon(), commits, nil, "", false, false, set.New[string](), "", "", "", "",
+		time.Now(), false, nil, 0, 1, false, graph.BoxDrawingSymbols, git_commands.NewNullBisectInfo(),
+		map[string]string{"pending": "PENDING", "failed": "FAILURE", "passed": "SUCCESS"},
+	)
+
+	line := strings.Join(result[0], " ")
+	assert.Contains(t, line, style.FgYellow.SetBold().Sprint("pending"))
+	assert.Contains(t, line, style.FgRed.SetBold().Sprint("failed"))
+	assert.Contains(t, line, style.FgGreen.SetBold().Sprint("passed"))
+	assert.NotContains(t, line, style.FgGreen.SetBold().Sprint("unknown"))
+	assert.NotContains(t, line, style.FgYellow.SetBold().Sprint("unknown"))
 }
 
 func TestGraphColorsFollowTheAuthorColors(t *testing.T) {

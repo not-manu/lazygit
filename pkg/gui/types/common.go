@@ -370,6 +370,7 @@ type Model struct {
 	Worktrees       []*models.Worktree
 	PullRequests    []*models.GithubPullRequest
 	PullRequestsMap map[string]*models.GithubPullRequest
+	TagChecksStates map[string]string
 
 	// FilteredReflogCommits are the ones that appear in the reflog panel.
 	// When in filtering mode we only include the ones that match the given path

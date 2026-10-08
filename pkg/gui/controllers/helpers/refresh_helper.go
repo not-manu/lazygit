@@ -54,7 +54,11 @@ type RefreshHelper struct {
 	// concurrent branch loads don't clobber each other out of order.
 	branchLoadSeq        atomic.Int64
 	appliedBranchLoadSeq int64
+
+	tagChecksPollScheduled atomic.Bool
 }
+
+const tagChecksPollInterval = 15 * time.Second
 
 func NewRefreshHelper(
 	c *HelperCommon,
@@ -1737,6 +1741,7 @@ func (self *RefreshHelper) refreshGithubPullRequests(branches []*models.Branch, 
 		self.onUIThreadUnlessRepoChanged(env, func() {
 			self.c.Model().PullRequests = nil
 			self.c.Model().PullRequestsMap = nil
+			self.c.Model().TagChecksStates = nil
 		})
 	}
 
@@ -1756,7 +1761,44 @@ func (self *RefreshHelper) refreshGithubPullRequests(branches []*models.Branch, 
 		return
 	}
 
+	self.setGithubTagChecks(baseInfo, env)
 	self.setGithubPullRequests(baseInfo, branches, env)
+}
+
+func (self *RefreshHelper) setGithubTagChecks(baseInfo *githubRemoteInfo, env refreshEnv) {
+	states, err := env.git.GitHub.FetchTagChecksStates(&baseInfo.serviceInfo, baseInfo.authToken)
+	if err != nil {
+		self.c.Log.Error("error fetching tag checks from GitHub: " + err.Error())
+		return
+	}
+
+	self.onUIThreadUnlessRepoChanged(env, func() {
+		self.c.Model().TagChecksStates = states
+		self.c.PostRefreshUpdateWithOptions(self.c.Contexts().LocalCommits,
+			types.OnFocusOpts{KeepScrollPosition: true, SkipMainViewUpdate: true})
+	})
+
+	if lo.Some(lo.Values(states), []string{"PENDING", "EXPECTED"}) {
+		self.pollGithubTagChecks(baseInfo, env)
+	}
+}
+
+func (self *RefreshHelper) pollGithubTagChecks(baseInfo *githubRemoteInfo, env refreshEnv) {
+	if !self.tagChecksPollScheduled.CompareAndSwap(false, true) {
+		return
+	}
+
+	env.batch = nil
+	time.AfterFunc(tagChecksPollInterval, func() {
+		self.tagChecksPollScheduled.Store(false)
+		if self.c.State().GetRepoGeneration() != env.generation {
+			return
+		}
+		self.c.OnWorkerBackground(func(gocui.Task) error {
+			self.setGithubTagChecks(baseInfo, env)
+			return nil
+		})
+	})
 }
 
 type githubRemoteInfo struct {

@@ -264,7 +264,87 @@ func (self *GitHubCommands) FetchRecentPRs(branches []string, serviceInfo *hosti
 func (self *GitHubCommands) fetchRecentPRsAux(endpoint string, repoOwner string, repoName string, branches []string, token string) ([]*models.GithubPullRequest, error) {
 	queryString, variables := fetchPullRequestsQuery(branches, repoOwner, repoName)
 
-	bodyBytes, err := json.Marshal(graphQLRequest{Query: queryString, Variables: variables})
+	respBytes, err := postGraphQL(endpoint, token, queryString, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	return parsePullRequestsResponse(respBytes)
+}
+
+const tagChecksQuery = `query($owner: String!, $repo: String!) {
+  repository(owner: $owner, name: $repo) {
+    refs(refPrefix: "refs/tags/", first: 30, orderBy: {field: TAG_COMMIT_DATE, direction: DESC}) {
+      nodes {
+        name
+        target {
+          ... on Commit {
+            statusCheckRollup {
+              state
+            }
+          }
+          ... on Tag {
+            target {
+              ... on Commit {
+                statusCheckRollup {
+                  state
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
+type tagChecksResponse struct {
+	Data struct {
+		Repository struct {
+			Refs struct {
+				Nodes []githubTagRef `json:"nodes"`
+			} `json:"refs"`
+		} `json:"repository"`
+	} `json:"data"`
+}
+
+type githubTagRef struct {
+	Name   string `json:"name"`
+	Target struct {
+		StatusCheckRollup GithubStatusCheckRollup `json:"statusCheckRollup"`
+		Target            GithubGitObject         `json:"target"`
+	} `json:"target"`
+}
+
+func (self *GitHubCommands) FetchTagChecksStates(serviceInfo *hosting_service.ServiceInfo, token string) (map[string]string, error) {
+	variables := map[string]string{"owner": serviceInfo.Owner, "repo": serviceInfo.Repository}
+	respBytes, err := postGraphQL(graphQLEndpoint(serviceInfo.WebDomain), token, tagChecksQuery, variables)
+	if err != nil {
+		return nil, err
+	}
+
+	return parseTagChecksResponse(respBytes)
+}
+
+func parseTagChecksResponse(respBytes []byte) (map[string]string, error) {
+	var result tagChecksResponse
+	if err := json.Unmarshal(respBytes, &result); err != nil {
+		return nil, err
+	}
+
+	states := map[string]string{}
+	for _, ref := range result.Data.Repository.Refs.Nodes {
+		state := lo.CoalesceOrEmpty(ref.Target.StatusCheckRollup.State, ref.Target.Target.StatusCheckRollup.State)
+		if state != "" {
+			states[ref.Name] = state
+		}
+	}
+
+	return states, nil
+}
+
+func postGraphQL(endpoint string, token string, query string, variables map[string]string) ([]byte, error) {
+	bodyBytes, err := json.Marshal(graphQLRequest{Query: query, Variables: variables})
 	if err != nil {
 		return nil, err
 	}
@@ -292,12 +372,7 @@ func (self *GitHubCommands) fetchRecentPRsAux(endpoint string, repoOwner string,
 		return nil, fmt.Errorf("GraphQL query failed with status: %s. Body: %s", resp.Status, bodyStr.String())
 	}
 
-	respBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	return parsePullRequestsResponse(respBytes)
+	return io.ReadAll(resp.Body)
 }
 
 func parsePullRequestsResponse(respBytes []byte) ([]*models.GithubPullRequest, error) {
