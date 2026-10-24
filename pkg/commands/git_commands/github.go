@@ -286,7 +286,7 @@ func fetchTagChecksQuery(tags []string, owner string, repo string) (string, map[
         ... on Commit { %s }
         ... on Tag { target { ... on Commit { %s } } }
       }
-    }`, i+1, varName, tagChecksRollupFields, tagChecksRollupFields))
+    }`, i+1, varName, tagCommitChecksFields, tagCommitChecksFields))
 	}
 
 	return fmt.Sprintf(`query(%s) {
@@ -296,11 +296,24 @@ func fetchTagChecksQuery(tags []string, owner string, repo string) (string, map[
 }`, strings.Join(varDecls, ", "), strings.Join(queries, "\n")), variables
 }
 
-const tagChecksRollupFields = `statusCheckRollup {
+const tagCommitChecksFields = `statusCheckRollup {
   state
   contexts(first: 20) {
     nodes {
       ... on CheckRun {
+        startedAt
+        completedAt
+      }
+    }
+  }
+}
+checkSuites(first: 10) {
+  nodes {
+    status
+    conclusion
+    workflowRun { databaseId }
+    checkRuns(first: 20) {
+      nodes {
         startedAt
         completedAt
       }
@@ -317,27 +330,70 @@ type tagChecksResponse struct {
 type githubTagRef struct {
 	Name   string `json:"name"`
 	Target struct {
-		StatusCheckRollup *tagChecksRollup `json:"statusCheckRollup"`
-		Target            struct {
-			StatusCheckRollup *tagChecksRollup `json:"statusCheckRollup"`
-		} `json:"target"`
+		tagCommitChecks
+		Target tagCommitChecks `json:"target"`
 	} `json:"target"`
+}
+
+type tagCommitChecks struct {
+	StatusCheckRollup *tagChecksRollup `json:"statusCheckRollup"`
+	CheckSuites       struct {
+		Nodes []tagCheckSuite `json:"nodes"`
+	} `json:"checkSuites"`
 }
 
 type tagChecksRollup struct {
 	State    string `json:"state"`
 	Contexts struct {
-		Nodes []struct {
-			StartedAt   *time.Time `json:"startedAt"`
-			CompletedAt *time.Time `json:"completedAt"`
-		} `json:"nodes"`
+		Nodes []checkRunTimes `json:"nodes"`
 	} `json:"contexts"`
 }
 
-func (r *tagChecksRollup) toTagChecks() models.TagChecks {
-	checks := models.TagChecks{State: r.State}
+type tagCheckSuite struct {
+	Status      string    `json:"status"`
+	Conclusion  string    `json:"conclusion"`
+	WorkflowRun *struct{} `json:"workflowRun"`
+	CheckRuns   struct {
+		Nodes []checkRunTimes `json:"nodes"`
+	} `json:"checkRuns"`
+}
+
+type checkRunTimes struct {
+	StartedAt   *time.Time `json:"startedAt"`
+	CompletedAt *time.Time `json:"completedAt"`
+}
+
+func (c tagCommitChecks) toTagChecks() (models.TagChecks, bool) {
+	if c.StatusCheckRollup != nil && c.StatusCheckRollup.State != "" {
+		return tagChecksFromRuns(c.StatusCheckRollup.State, c.StatusCheckRollup.Contexts.Nodes), true
+	}
+
+	workflowSuites := lo.Filter(c.CheckSuites.Nodes, func(suite tagCheckSuite, _ int) bool { return suite.WorkflowRun != nil })
+	if len(workflowSuites) == 0 {
+		return models.TagChecks{}, false
+	}
+
+	runs := lo.FlatMap(workflowSuites, func(suite tagCheckSuite, _ int) []checkRunTimes { return suite.CheckRuns.Nodes })
+	return tagChecksFromRuns(workflowSuitesState(workflowSuites), runs), true
+}
+
+func workflowSuitesState(suites []tagCheckSuite) string {
+	switch {
+	case lo.SomeBy(suites, func(suite tagCheckSuite) bool { return suite.Status != "COMPLETED" }):
+		return "PENDING"
+	case lo.EveryBy(suites, func(suite tagCheckSuite) bool {
+		return lo.Contains([]string{"SUCCESS", "NEUTRAL", "SKIPPED"}, suite.Conclusion)
+	}):
+		return "SUCCESS"
+	default:
+		return "FAILURE"
+	}
+}
+
+func tagChecksFromRuns(state string, runs []checkRunTimes) models.TagChecks {
+	checks := models.TagChecks{State: state}
 	finished := true
-	for _, run := range r.Contexts.Nodes {
+	for _, run := range runs {
 		if run.StartedAt == nil {
 			continue
 		}
@@ -377,9 +433,11 @@ func parseTagChecksResponse(respBytes []byte) (map[string]models.TagChecks, erro
 		if ref == nil {
 			continue
 		}
-		rollup := lo.CoalesceOrEmpty(ref.Target.StatusCheckRollup, ref.Target.Target.StatusCheckRollup)
-		if rollup != nil && rollup.State != "" {
-			checks[ref.Name] = rollup.toTagChecks()
+		for _, commit := range []tagCommitChecks{ref.Target.tagCommitChecks, ref.Target.Target} {
+			if tagChecks, ok := commit.toTagChecks(); ok {
+				checks[ref.Name] = tagChecks
+				break
+			}
 		}
 	}
 

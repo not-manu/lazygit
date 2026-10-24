@@ -210,6 +210,55 @@ func TestParseTagChecksResponse(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestParseTagChecksResponseFallsBackToWorkflowSuites(t *testing.T) {
+	response := []byte(`{"data":{"repository":{
+		"a1":{"name":"v0.0.3","target":{"target":{"statusCheckRollup":null,"checkSuites":{"nodes":[
+			{"status":"QUEUED","conclusion":null,"workflowRun":null,"checkRuns":{"nodes":[]}},
+			{"status":"COMPLETED","conclusion":"SUCCESS","workflowRun":{"databaseId":1},"checkRuns":{"nodes":[
+				{"startedAt":"2026-01-01T12:00:00Z","completedAt":"2026-01-01T12:01:00Z"}
+			]}}
+		]}}}},
+		"a2":{"name":"v0.0.2","target":{"statusCheckRollup":null,"checkSuites":{"nodes":[
+			{"status":"IN_PROGRESS","conclusion":null,"workflowRun":{"databaseId":2},"checkRuns":{"nodes":[
+				{"startedAt":"2026-01-01T11:00:00Z","completedAt":null}
+			]}}
+		]}}},
+		"a3":{"name":"v0.0.1","target":{"target":{"statusCheckRollup":null,"checkSuites":{"nodes":[
+			{"status":"COMPLETED","conclusion":"SUCCESS","workflowRun":{"databaseId":3},"checkRuns":{"nodes":[]}},
+			{"status":"COMPLETED","conclusion":"CANCELLED","workflowRun":{"databaseId":4},"checkRuns":{"nodes":[]}}
+		]}}}},
+		"a4":{"name":"v0.0.0","target":{"target":{"statusCheckRollup":null,"checkSuites":{"nodes":[
+			{"status":"QUEUED","conclusion":null,"workflowRun":null,"checkRuns":{"nodes":[]}}
+		]}}}},
+		"a5":{"name":"v1.0.0","target":{"target":{"statusCheckRollup":{"state":"FAILURE","contexts":{"nodes":[]}},"checkSuites":{"nodes":[
+			{"status":"COMPLETED","conclusion":"SUCCESS","workflowRun":{"databaseId":5},"checkRuns":{"nodes":[]}}
+		]}}}}
+	}}}`)
+
+	checks, err := parseTagChecksResponse(response)
+
+	at := func(value string) time.Time {
+		parsed, err := time.Parse(time.RFC3339, value)
+		assert.NoError(t, err)
+		return parsed
+	}
+	assert.NoError(t, err)
+	assert.Equal(t, map[string]models.TagChecks{
+		"v0.0.3": {State: "SUCCESS", StartedAt: at("2026-01-01T12:00:00Z"), CompletedAt: at("2026-01-01T12:01:00Z")},
+		"v0.0.2": {State: "PENDING", StartedAt: at("2026-01-01T11:00:00Z")},
+		"v0.0.1": {State: "FAILURE"},
+		"v1.0.0": {State: "FAILURE"},
+	}, checks)
+}
+
+func TestFetchTagChecksQueryIncludesWorkflowSuites(t *testing.T) {
+	query, _ := fetchTagChecksQuery([]string{"v1.0.0"}, "owner", "repo")
+
+	assert.Contains(t, query, "statusCheckRollup {")
+	assert.Contains(t, query, "checkSuites(first: 10) {")
+	assert.Contains(t, query, "workflowRun { databaseId }")
+}
+
 func TestGenerateGithubPullRequestMap(t *testing.T) {
 	cases := []struct {
 		name     string
